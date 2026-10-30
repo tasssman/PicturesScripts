@@ -1,6 +1,6 @@
 # Uruchom menu poleceniem: powershell.exe -ExecutionPolicy Bypass -File .\PicturesMenu.ps1
 
-$scriptVersion = '1.0.4'
+$scriptVersion = '1.0.5'
 Write-Host '========================================'
 Write-Host '        ZARZADZANIE ZDJECIAMI'
 Write-Host "        Wersja: $scriptVersion"
@@ -20,7 +20,7 @@ param(
     [switch] $Recurse
 )
 
-$scriptVersion = '1.0.2'
+$scriptVersion = '1.0.3'
 Write-Host "RenameFiles.ps1 v$scriptVersion"
 
 Write-Host 'Co zmieniamy? [1] Zdjecia  [2] Wideo'
@@ -58,24 +58,27 @@ $selectedExtensions = if ($isVideo) { $videoExtensions } else { $photoExtensions
 $getCaptureDate = {
     param([string] $FilePath)
 
+    $isHeicFile = [System.IO.Path]::GetExtension($FilePath) -in @('.heic', '.heif')
     $image = $null
-    try {
-        $image = [System.Drawing.Image]::FromFile($FilePath)
-        $propertyItems = @($image.PropertyItems)
-        Write-Verbose ('EXIF tag IDs in {0}: {1}' -f [System.IO.Path]::GetFileName($FilePath), (($propertyItems | ForEach-Object { '0x{0:X4}' -f [int]$_.Id }) -join ', '))
-        foreach ($tag in @(0x9003, 0x9004, 0x0132)) {
-            $item = $propertyItems | Where-Object { [int]$_.Id -eq $tag } | Select-Object -First 1
-            if ($null -ne $item) {
-                $value = [System.Text.Encoding]::ASCII.GetString($item.Value)
-                Write-Verbose ('EXIF 0x{0:X4}: Type={1}; Raw=<{2}>' -f $tag, $item.Type, $value)
-                $parsed = ConvertFrom-ExifDateString -Value $value
-                if ($null -ne $parsed) { return $parsed }
+    if (-not $isHeicFile) {
+        try {
+            $image = [System.Drawing.Image]::FromFile($FilePath)
+            $propertyItems = @($image.PropertyItems)
+            Write-Verbose ('EXIF tag IDs in {0}: {1}' -f [System.IO.Path]::GetFileName($FilePath), (($propertyItems | ForEach-Object { '0x{0:X4}' -f [int]$_.Id }) -join ', '))
+            foreach ($tag in @(0x9003, 0x9004, 0x0132)) {
+                $item = $propertyItems | Where-Object { [int]$_.Id -eq $tag } | Select-Object -First 1
+                if ($null -ne $item) {
+                    $value = [System.Text.Encoding]::ASCII.GetString($item.Value)
+                    Write-Verbose ('EXIF 0x{0:X4}: Type={1}; Raw=<{2}>' -f $tag, $item.Type, $value)
+                    $parsed = ConvertFrom-ExifDateString -Value $value
+                    if ($null -ne $parsed) { return $parsed }
+                }
             }
+        } catch {
+            Write-Warning ("Nie mo{0}na odczyta{1} metadanych: {2} ({3})" -f [char]0x017C, [char]0x0107, $FilePath, $_.Exception.Message)
+        } finally {
+            if ($null -ne $image) { $image.Dispose() }
         }
-    } catch {
-        Write-Warning ("Nie mo{0}na odczyta{1} metadanych: {2} ({3})" -f [char]0x017C, [char]0x0107, $FilePath, $_.Exception.Message)
-    } finally {
-        if ($null -ne $image) { $image.Dispose() }
     }
 
     # Windows Shell exposes the same capture-time metadata for formats/codecs
@@ -83,8 +86,8 @@ $getCaptureDate = {
     $shell = $null
     try {
         $shell = New-Object -ComObject Shell.Application
-        $folder = $shell.Namespace((Split-Path -LiteralPath $FilePath -Parent))
-        $shellFile = $folder.ParseName((Split-Path -LiteralPath $FilePath -Leaf))
+        $folder = $shell.Namespace([System.IO.Path]::GetDirectoryName($FilePath))
+        $shellFile = $folder.ParseName([System.IO.Path]::GetFileName($FilePath))
         $shellDate = $shellFile.ExtendedProperty('System.Photo.DateTaken')
         if ($shellDate -is [datetime]) { return $shellDate }
         if ($shellDate) {
